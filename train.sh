@@ -1,17 +1,17 @@
 python3.7 sft.py \
- --dataset_path data/dataset.jsonl \
+ --dataset_path dataset/dataset3.jsonl \
  --optim "adafactor" \
  --learning_rate 1e-4 \
  --lr_scheduler_type constant \
  --per_gpu_train_batch_size 1 \
  --gradient_checkpointing 0 \
  --gradient_accumulation_steps 35 \
- --num_train_epochs 5 \
+ --num_train_epochs 3 \
  --report_to wandb \
  --logging_strategy steps \
  --logging_steps 10 \
  --save_steps 1000 \
  --bf16 \
- --model_name_or_path ai-forever/FRED-T5-1.7B \
- --output_dir trained_fred \
+ --model_name_or_path  instructor_base \
+ --output_dir fred_instruct_2 \
  --save_strategy steps

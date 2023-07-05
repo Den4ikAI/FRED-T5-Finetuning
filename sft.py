@@ -15,10 +15,14 @@ import torch
 import torch.optim
 from torch.utils.data import Dataset, DataLoader
 import transformers
+from transformers import AutoTokenizer
 from transformers import TrainingArguments, Trainer, TrainerCallback
+from transformers import T5ForConditionalGeneration, T5Tokenizer, T5Config
 from transformers import HfArgumentParser
 from pynvml import *
 
+
+proj_dir = os.path.expanduser('~/polygon/chatbot')
 
 
 def print_gpu_utilization():
@@ -33,18 +37,26 @@ def load_samples(dataset_path, tokenizer):
     with open(dataset_path, 'r') as f:
         for sample in tqdm.tqdm(json.load(f)):
             try:
-                # Выбираем денойзер для задачи.
-                # Денойзер <SC1> лучше подходит для диалогов
-                # Денойзер <SC6> лучше подходит для QA, Инструкций и т.д
-                seed =  '<SC6>' + sample['question'] + '<extra_id_0>'
-                reply = '<extra_id_0>' + sample['answer']
-                input_tokens = tokenizer.encode(seed, add_special_tokens=False, truncation=True, max_length=1024)
-                output_tokens = tokenizer.encode(reply, add_special_tokens=False)  # , truncation=True, max_length=1024)
-                if len(input_tokens) < 768 and len(output_tokens) < 768:  # Ограничим длину сэмплов (подбираем эмпирически под GPU. Тут для RTX4090 в bf16)
-                    samples.append({'input_tokens': input_tokens,
-                                    'output_tokens': output_tokens,
-                                    'seed': seed,
-                                    'reply': reply})
+                if 'dialog' in sample['name']:
+                    seed =  '<SC1>' + sample['input'] + '<extra_id_0>'
+                    reply = '<extra_id_0>' + sample['output']
+                    input_tokens = tokenizer.encode(seed, add_special_tokens=False, truncation=True, max_length=1024)
+                    output_tokens = tokenizer.encode(reply, add_special_tokens=False)  # , truncation=True, max_length=1024)
+                    if len(input_tokens) < 768 and len(output_tokens) < 768:  # пока ограничим многословность
+                        samples.append({'input_tokens': input_tokens,
+                                        'output_tokens': output_tokens,
+                                        'seed': seed,
+                                        'reply': reply})
+                else:
+                    seed =  '<SC6>Человек: ' + sample['input'] + '<extra_id_0>'
+                    reply = '<extra_id_0>' + sample['output']
+                    input_tokens = tokenizer.encode(seed, add_special_tokens=False, truncation=True, max_length=1024)
+                    output_tokens = tokenizer.encode(reply, add_special_tokens=False)  # , truncation=True, max_length=1024)
+                    if len(input_tokens) < 768 and len(output_tokens) < 768:  # пока ограничим многословность
+                        samples.append({'input_tokens': input_tokens,
+                                        'output_tokens': output_tokens,
+                                        'seed': seed,
+                                        'reply': reply})
             except Exception as ex:
                 print(ex)
 
@@ -105,6 +117,7 @@ class DataTrainingArguments:
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
     dataset_path: Optional[str] = field(
+        default=os.path.join(proj_dir, 'tmp', 'axioma_dialogues.json'),
         metadata={"help": "Путь к датасету с диалогами"}
     )
 
@@ -117,6 +130,8 @@ if __name__ == '__main__':
     if not training_args.optim:
         training_args.optim = "adafactor"
 
+    if not training_args.output_dir:
+        training_args.output_dir = os.path.join(proj_dir, 'tmp', 'fredt5_chitchat')
 
     verbose = training_args.local_rank in (-1, 0)
 
@@ -130,7 +145,7 @@ if __name__ == '__main__':
     log_level = training_args.get_process_log_level()
     print(log_level)
     logger = logging.getLogger(__name__)
-    logger.setLevel(log_level)
+    logger.setLevel(logging.INFO)
     #datasets.utils.logging.set_verbosity(log_level)
     transformers.utils.logging.set_verbosity(log_level)
     transformers.utils.logging.enable_default_handler()
@@ -144,13 +159,20 @@ if __name__ == '__main__':
 
     rank0 = training_args.local_rank in (-1, 0)
 
+    # Удаляем старые логи tensorboard
+    if rank0:
+        tensorboard_dir = os.path.join(training_args.output_dir, 'runs')
+        #if os.path.exists(tensorboard_dir):
+        #    logger.info('Removing "%s"', tensorboard_dir)
+        #    shutil.rmtree(tensorboard_dir)
+
     device = training_args.device
     logger.info('device={}'.format(device))
 
     pretrained_model_name = model_args.model_name_or_path
 
     logger.info('Loading pretrained model "%s"', pretrained_model_name)
-    tokenizer = transformers.GPT2Tokenizer.from_pretrained(pretrained_model_name)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(pretrained_model_name)
     model = transformers.T5ForConditionalGeneration.from_pretrained(pretrained_model_name, torch_dtype=torch.bfloat16)
     model.to(device)
 
